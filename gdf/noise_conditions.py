@@ -19,11 +19,14 @@ class BaseNoiseCond():
             logSNR = logSNR.clone() + 2 * np.log(self.shift)
         return self.cond(logSNR).clamp(*self.clamp_range)
 
+
 class CosineTNoiseCond(BaseNoiseCond):
+
     def setup(self, s=0.008, clamp_range=[0, 1]): # [0.0001, 0.9999]
         self.s = torch.tensor([s])
         self.clamp_range = clamp_range
         self.min_var = torch.cos(self.s / (1 + self.s) * torch.pi * 0.5) ** 2
+    # end setup
 
     def cond(self, logSNR):
         var = logSNR.sigmoid()
@@ -31,6 +34,10 @@ class CosineTNoiseCond(BaseNoiseCond):
         s, min_var = self.s.to(var.device), self.min_var.to(var.device)
         t = (((var * min_var) ** 0.5).acos() / (torch.pi * 0.5)) * (1 + s) - s
         return t
+    # end cond
+
+# end CosineTNoiseCond
+
 
 class EDMNoiseCond(BaseNoiseCond):
     def cond(self, logSNR):

@@ -1,3 +1,5 @@
+
+# Imports
 import torch
 import torchvision
 from torch import nn, optim
@@ -30,7 +32,9 @@ from accelerate import init_empty_weights
 from accelerate.utils import set_module_tensor_to_device
 from contextlib import contextmanager
 
+
 class WurstCore(TrainingCore, DataCore, WarpCore):
+
     @dataclass(frozen=True)
     class Config(TrainingCore.Config, DataCore.Config, WarpCore.Config):
         # TRAINING PARAMS
@@ -70,32 +74,53 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
     config: Config
 
     def setup_extras_pre(self) -> Extras:
+        """
+        Setup the extras for the model.
+        """
         gdf = GDF(
             schedule=CosineSchedule(clamp_range=[0.0001, 0.9999]),
             input_scaler=VPScaler(), target=EpsilonTarget(),
             noise_cond=CosineTNoiseCond(),
             loss_weight=AdaptiveLossWeight() if self.config.adaptive_loss_weight is True else P2LossWeight(),
         )
-        sampling_configs = {"cfg": 1.5, "sampler": DDPMSampler(gdf), "shift": 1, "timesteps": 10}
 
+        # Sampling configuration
+        sampling_configs = {
+            "cfg": 1.5,
+            "sampler": DDPMSampler(gdf),
+            "shift": 1,
+            "timesteps": 10
+        }
+
+        # Adaptive loss weight
         if self.info.adaptive_loss is not None:
             gdf.loss_weight.bucket_ranges = torch.tensor(self.info.adaptive_loss['bucket_ranges'])
             gdf.loss_weight.bucket_losses = torch.tensor(self.info.adaptive_loss['bucket_losses'])
+        # end if
 
+        # Preprocessing
         effnet_preprocess = torchvision.transforms.Compose([
             torchvision.transforms.Normalize(
                 mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)
             )
         ])
 
+        # Transforms
         transforms = torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
-            torchvision.transforms.Resize(self.config.image_size,
-                                        interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                                        antialias=True),
-            SmartCrop(self.config.image_size, randomize_p=0.3, randomize_q=0.2) if self.config.training else torchvision.transforms.CenterCrop(self.config.image_size)
+            torchvision.transforms.Resize(
+                self.config.image_size,
+                interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                antialias=True
+            ),
+            SmartCrop(
+                self.config.image_size,
+                randomize_p=0.3,
+                randomize_q=0.2
+            ) if self.config.training else torchvision.transforms.CenterCrop(self.config.image_size)
         ])
 
+        # Return configuration
         return self.Extras(
             gdf=gdf,
             sampling_configs=sampling_configs,
@@ -103,12 +128,29 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             effnet_preprocess=effnet_preprocess,
             clip_preprocess=None
         )
+    # end setup_extras_pre
 
-    def get_conditions(self, batch: dict, models: Models, extras: Extras, is_eval=False, is_unconditional=False, eval_image_embeds=False, return_fields=None):
+    def get_conditions(
+            self,
+            batch: dict,
+            models: Models,
+            extras: Extras,
+            is_eval=False,
+            is_unconditional=False,
+            eval_image_embeds=False,
+            return_fields=None
+    ):
+        """
+        Get the conditions for the model.
+        """
         images = batch.get('images', None)
 
+        # If images given
         if images is not None:
+            # To device
             images = images.to(self.device)
+
+            # Get EfficientNet embeddings
             if is_eval and not is_unconditional:
                 effnet_embeddings = models.effnet(extras.effnet_preprocess(images))
             else:
@@ -116,25 +158,70 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
                     effnet_factor = 1
                 else:
                     effnet_factor = np.random.uniform(0.5, 1) # f64 to f32
-                effnet_height, effnet_width = int(((images.size(-2)*effnet_factor)//32)*32), int(((images.size(-1)*effnet_factor)//32)*32)
+                # end if
 
-                effnet_embeddings = torch.zeros(images.size(0), 16, effnet_height//32, effnet_width//32, device=self.device)
+                # Embedding height and width according to scaling factor
+                effnet_height, effnet_width = (
+                    int(((images.size(-2) * effnet_factor) // 32) * 32),
+                    int(((images.size(-1) * effnet_factor) // 32) * 32)
+                )
+
+                # Empty effnet embedding
+                effnet_embeddings = torch.zeros(
+                    images.size(0),
+                    16,
+                    effnet_height // 32,
+                    effnet_width // 32,
+                    device=self.device
+                )
+
+                # Training part
                 if not is_eval:
-                    effnet_images = torchvision.transforms.functional.resize(images, (effnet_height, effnet_width), interpolation=torchvision.transforms.InterpolationMode.NEAREST)
+                    # Resize images
+                    effnet_images = torchvision.transforms.functional.resize(
+                        images,
+                        (effnet_height, effnet_width),
+                        interpolation=torchvision.transforms.InterpolationMode.NEAREST
+                    )
+
+                    # Take random images
                     rand_idx = np.random.rand(len(images)) <= 0.9
+
+                    # Encode images
                     if any(rand_idx):
                         effnet_embeddings[rand_idx] = models.effnet(extras.effnet_preprocess(effnet_images[rand_idx]))
+                    # end if
+                # end if
+            # end if
         else:
             effnet_embeddings = None
-            
+        # end if
+
+        # Get CLIP text embedding
         conditions = super().get_conditions(
-            batch, models, extras, is_eval, is_unconditional,
-            eval_image_embeds, return_fields=return_fields or ['clip_text_pooled']
+            batch,
+            models,
+            extras,
+            is_eval,
+            is_unconditional,
+            eval_image_embeds,
+            return_fields=return_fields or ['clip_text_pooled']
         )
 
-        return {'effnet': effnet_embeddings, 'clip': conditions['clip_text_pooled']}
+        return {
+            'effnet': effnet_embeddings,
+            'clip': conditions['clip_text_pooled']
+        }
+    # end get_conditions
 
-    def setup_models(self, extras: Extras, skip_clip: bool = False) -> Models:
+    def setup_models(
+            self,
+            extras: Extras,
+            skip_clip: bool = False
+    ) -> Models:
+        """
+        Setup the models for the training.
+        """
         dtype = getattr(torch, self.config.dtype) if self.config.dtype else torch.float32
 
         # EfficientNet encoder
@@ -154,7 +241,9 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
         @contextmanager
         def dummy_context():
             yield None
+        # end dummy_context
 
+        # Init weights or no init
         loading_context = dummy_context if self.config.training else init_empty_weights
 
         # Diffusion models
@@ -164,49 +253,73 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
                 generator = StageB(c_hidden=[320, 640, 1280, 1280], nhead=[-1, -1, 20, 20], blocks=[[2, 6, 28, 6], [6, 28, 6, 2]], block_repeat=[[1, 1, 1, 1], [3, 3, 2, 2]])
                 if self.config.ema_start_iters is not None:
                     generator_ema = StageB(c_hidden=[320, 640, 1280, 1280], nhead=[-1, -1, 20, 20], blocks=[[2, 6, 28, 6], [6, 28, 6, 2]], block_repeat=[[1, 1, 1, 1], [3, 3, 2, 2]])
+                # end if
             elif self.config.model_version == '700M':
                 generator = StageB(c_hidden=[320, 576, 1152, 1152], nhead=[-1, 9, 18, 18], blocks=[[2, 4, 14, 4], [4, 14, 4, 2]], block_repeat=[[1, 1, 1, 1], [2, 2, 2, 2]])
                 if self.config.ema_start_iters is not None:
                     generator_ema = StageB(c_hidden=[320, 576, 1152, 1152], nhead=[-1, 9, 18, 18], blocks=[[2, 4, 14, 4], [4, 14, 4, 2]], block_repeat=[[1, 1, 1, 1], [2, 2, 2, 2]])
+                # end if
             else:
                 raise ValueError(f"Unknown model version {self.config.model_version}")
+            # end if
+        # end with loading_context
 
+        # Load generator from checkpoint
         if self.config.generator_checkpoint_path is not None:
             if loading_context is dummy_context:
                 generator.load_state_dict(load_or_fail(self.config.generator_checkpoint_path))
             else:
                 for param_name, param in load_or_fail(self.config.generator_checkpoint_path).items():
                     set_module_tensor_to_device(generator, param_name, "cpu", value=param)
+                # end for
+            # end if
+        # end if
+
+        # Load generator EMA from checkpoint
         generator = generator.to(dtype).to(self.device)
         generator = self.load_model(generator, 'generator')
 
+        # If there is EMA
         if generator_ema is not None:
             if loading_context is dummy_context:
                 generator_ema.load_state_dict(generator.state_dict())
             else:
                 for param_name, param in generator.state_dict().items():
                     set_module_tensor_to_device(generator_ema, param_name, "cpu", value=param)
+                # end for
+            # end if
             generator_ema = self.load_model(generator_ema, 'generator_ema')
             generator_ema.to(dtype).to(self.device).eval().requires_grad_(False)
+        # end if
 
+        # Use Fully Sharded Data Parallel ?
         if self.config.use_fsdp:
             fsdp_auto_wrap_policy = ModuleWrapPolicy([ResBlock, AttnBlock, TimestepBlock, FeedForwardBlock])
             generator = FSDP(generator, **self.fsdp_defaults, auto_wrap_policy=fsdp_auto_wrap_policy, device_id=self.device)
             if generator_ema is not None:
                 generator_ema = FSDP(generator_ema, **self.fsdp_defaults, auto_wrap_policy=fsdp_auto_wrap_policy, device_id=self.device)
+            # end if
+        # end if use_fsdp
 
+        # Load CLIP if necessary
         if skip_clip:
             tokenizer = None
             text_model = None
         else:
             tokenizer = AutoTokenizer.from_pretrained(self.config.clip_text_model_name)
             text_model = CLIPTextModelWithProjection.from_pretrained(self.config.clip_text_model_name).requires_grad_(False).to(dtype).to(self.device)
+        # end if
 
+        # Return models packaged
         return self.Models(
-            effnet=effnet, stage_a=stage_a,
-            generator=generator, generator_ema=generator_ema,
-            tokenizer=tokenizer, text_model=text_model
+            effnet=effnet,
+            stage_a=stage_a,
+            generator=generator,
+            generator_ema=generator_ema,
+            tokenizer=tokenizer,
+            text_model=text_model
         )
+    # end setup_models
 
     def setup_optimizers(self, extras: Extras, models: Models) -> TrainingCore.Optimizers:
         optimizer = optim.AdamW(models.generator.parameters(), lr=self.config.lr)  # , eps=1e-7, betas=(0.9, 0.95))

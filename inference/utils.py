@@ -51,7 +51,13 @@ def show_images(images, rows=None, cols=None, return_images=False, **kwargs):
         return grid
 
 
-def calculate_latent_sizes(height=1024, width=1024, batch_size=4, compression_factor_b=42.67, compression_factor_a=4.0):
+def calculate_latent_sizes(
+        height=1024,
+        width=1024,
+        batch_size=4,
+        compression_factor_b=42.67,
+        compression_factor_a=4.0
+):
     resolution_multiple = 42.67
     latent_height = ceil(height / compression_factor_b)
     latent_width = ceil(width / compression_factor_b)
@@ -62,3 +68,5 @@ def calculate_latent_sizes(height=1024, width=1024, batch_size=4, compression_fa
     stage_b_latent_shape = (batch_size, 4, latent_height, latent_width)
     
     return stage_c_latent_shape, stage_b_latent_shape
+# end calculate_latent_sizes
+

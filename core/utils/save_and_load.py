@@ -29,9 +29,17 @@ def safe_save(ckpt, path):
         safetensors.torch.save_file(ckpt, path)
     else:
         raise ValueError(f"File extension not supported: {path}")
+    # end if
+# end safe_save
 
 
-def load_or_fail(path, wandb_run_id=None):
+def load_or_fail(
+        path,
+        wandb_run_id=None
+):
+    """
+    Load a checkpoint from a file, or fail if the file is not found or corrupt.
+    """
     accepted_extensions = [".pt", ".ckpt", ".json", ".safetensors"]
     try:
         assert any(
@@ -57,3 +65,5 @@ def load_or_fail(path, wandb_run_id=None):
                 text=f"Training {wandb_run_id} tried to load checkpoint {path} and failed",
             )
         raise e
+# end load_or_fail
+

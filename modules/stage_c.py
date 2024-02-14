@@ -22,18 +22,50 @@ class UpDownBlock2d(nn.Module):
 
 
 class StageC(nn.Module):
-    def __init__(self, c_in=16, c_out=16, c_r=64, patch_size=1, c_cond=2048, c_hidden=[2048, 2048], nhead=[32, 32],
-                 blocks=[[8, 24], [24, 8]], block_repeat=[[1, 1], [1, 1]], level_config=['CTA', 'CTA'],
-                 c_clip_text=1280, c_clip_text_pooled=1280, c_clip_img=768, c_clip_seq=4, kernel_size=3,
-                 dropout=[0.1, 0.1], self_attn=True, t_conds=['sca', 'crp'], switch_level=[False]):
+    """
+    Stage C model
+    """
+
+    # Constructor
+    def __init__(
+            self,
+            c_in=16,
+            c_out=16,
+            c_r=64,
+            patch_size=1,
+            c_cond=2048,
+            c_hidden=[2048, 2048],
+            nhead=[32, 32],
+            blocks=[[8, 24], [24, 8]],
+            block_repeat=[[1, 1], [1, 1]],
+            level_config=['CTA', 'CTA'],
+            c_clip_text=1280,
+            c_clip_text_pooled=1280,
+            c_clip_img=768,
+            c_clip_seq=4,
+            kernel_size=3,
+            dropout=[0.1, 0.1],
+            self_attn=True,
+            t_conds=['sca', 'crp'],
+            switch_level=[False]
+    ):
+        """
+        Stage C model
+        """
+        # Init
         super().__init__()
+
         self.c_r = c_r
         self.t_conds = t_conds
         self.c_clip_seq = c_clip_seq
+
         if not isinstance(dropout, list):
             dropout = [dropout] * len(c_hidden)
+        # end if
+
         if not isinstance(self_attn, list):
             self_attn = [self_attn] * len(c_hidden)
+        # end if
 
         # CONDITIONING
         self.clip_txt_mapper = nn.Linear(c_clip_text, c_cond)
@@ -64,6 +96,7 @@ class StageC(nn.Module):
         self.down_blocks = nn.ModuleList()
         self.down_downscalers = nn.ModuleList()
         self.down_repeat_mappers = nn.ModuleList()
+
         for i in range(len(c_hidden)):
             if i > 0:
                 self.down_downscalers.append(nn.Sequential(
@@ -72,22 +105,31 @@ class StageC(nn.Module):
                 ))
             else:
                 self.down_downscalers.append(nn.Identity())
+            # end if
+
             down_block = nn.ModuleList()
+
             for _ in range(blocks[0][i]):
                 for block_type in level_config[i]:
                     block = get_block(block_type, c_hidden[i], nhead[i], dropout=dropout[i], self_attn=self_attn[i])
                     down_block.append(block)
+                # end for
+            # end for
+
             self.down_blocks.append(down_block)
             if block_repeat is not None:
                 block_repeat_mappers = nn.ModuleList()
                 for _ in range(block_repeat[0][i] - 1):
                     block_repeat_mappers.append(nn.Conv2d(c_hidden[i], c_hidden[i], kernel_size=1))
+                # end for
                 self.down_repeat_mappers.append(block_repeat_mappers)
+            # end if
 
         # -- up blocks
         self.up_blocks = nn.ModuleList()
         self.up_upscalers = nn.ModuleList()
         self.up_repeat_mappers = nn.ModuleList()
+
         for i in reversed(range(len(c_hidden))):
             if i > 0:
                 self.up_upscalers.append(nn.Sequential(
@@ -96,19 +138,28 @@ class StageC(nn.Module):
                 ))
             else:
                 self.up_upscalers.append(nn.Identity())
+            # end if
+
             up_block = nn.ModuleList()
+
             for j in range(blocks[1][::-1][i]):
                 for k, block_type in enumerate(level_config[i]):
                     c_skip = c_hidden[i] if i < len(c_hidden) - 1 and j == k == 0 else 0
                     block = get_block(block_type, c_hidden[i], nhead[i], c_skip=c_skip, dropout=dropout[i],
                                       self_attn=self_attn[i])
                     up_block.append(block)
+                # end for
+            # end for
             self.up_blocks.append(up_block)
+
             if block_repeat is not None:
                 block_repeat_mappers = nn.ModuleList()
                 for _ in range(block_repeat[1][::-1][i] - 1):
                     block_repeat_mappers.append(nn.Conv2d(c_hidden[i], c_hidden[i], kernel_size=1))
+                # end for
                 self.up_repeat_mappers.append(block_repeat_mappers)
+            # end if
+        # end for hidden
 
         # OUTPUT
         self.clf = nn.Sequential(
@@ -134,12 +185,21 @@ class StageC(nn.Module):
                     for layer in block.modules():
                         if isinstance(layer, nn.Linear):
                             nn.init.constant_(layer.weight, 0)
+                        # end if
+                    # end for
+                # end if
+            # end for block
+        # end for level block
+    # end __init__
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.Linear)):
             torch.nn.init.xavier_uniform_(m.weight)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
+            # end if
+        # end if
+    # end _init_weights
 
     def gen_r_embedding(self, r, max_positions=10000):
         r = r * max_positions
@@ -150,7 +210,9 @@ class StageC(nn.Module):
         emb = torch.cat([emb.sin(), emb.cos()], dim=1)
         if self.c_r % 2 == 1:  # zero pad
             emb = nn.functional.pad(emb, (0, 1), mode='constant')
+        # end if
         return emb
+    # end gen_r_embedding
 
     def gen_c_embeddings(self, clip_txt, clip_txt_pooled, clip_img):
         clip_txt = self.clip_txt_mapper(clip_txt)

@@ -34,6 +34,7 @@ from contextlib import contextmanager
 
 
 class WurstCore(TrainingCore, DataCore, WarpCore):
+
     @dataclass(frozen=True)
     class Config(TrainingCore.Config, DataCore.Config, WarpCore.Config):
         # TRAINING PARAMS
@@ -317,14 +318,19 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
     def decode_latents(self, latents: torch.Tensor, batch: dict, models: Models, extras: Extras) -> torch.Tensor:
         return models.previewer(latents)
 
+# end WurstCore
 
 if __name__ == '__main__':
+
     print("Launching Script")
+
     warpcore = WurstCore(
         config_file_path=sys.argv[1] if len(sys.argv) > 1 else None,
         device=torch.device(int(os.environ.get("SLURM_LOCALID")))
     )
+
     warpcore.fsdp_defaults['sharding_strategy'] = ShardingStrategy.NO_SHARD
 
     # RUN TRAINING
     warpcore()
+# end if

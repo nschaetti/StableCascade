@@ -132,15 +132,29 @@ class DataCore(WarpCore):
 
         return self.Data(dataset=dataset, dataloader=dataloader, iterator=dataloader_iterator)
 
-    def get_conditions(self, batch: dict, models: Models, extras: Extras, is_eval=False, is_unconditional=False,
-                       eval_image_embeds=False, return_fields=None):
+    def get_conditions(
+            self,
+            batch: dict,
+            models: Models,
+            extras: Extras,
+            is_eval=False,
+            is_unconditional=False,
+            eval_image_embeds=False,
+            return_fields=None
+    ):
+        """
+        Get the conditions for the model
+        """
         if return_fields is None:
             return_fields = ['clip_text', 'clip_text_pooled', 'clip_img']
+        # end if
 
+        # Get captions and images
         captions = batch.get('captions', None)
         images = batch.get('images', None)
         batch_size = len(captions)
 
+        # Encode the text
         text_embeddings = None
         text_pooled_embeddings = None
         if 'clip_text' in return_fields or 'clip_text_pooled' in return_fields:
@@ -149,36 +163,78 @@ class DataCore(WarpCore):
                     captions_unpooled = ["" for _ in range(batch_size)]
                 else:
                     captions_unpooled = captions
+                # end if
             else:
                 rand_idx = np.random.rand(batch_size) > 0.05
                 captions_unpooled = [str(c) if keep else "" for c, keep in zip(captions, rand_idx)]
-            clip_tokens_unpooled = models.tokenizer(captions_unpooled, truncation=True, padding="max_length",
-                                                    max_length=models.tokenizer.model_max_length,
-                                                    return_tensors="pt").to(self.device)
-            text_encoder_output = models.text_model(**clip_tokens_unpooled, output_hidden_states=True)
+            # end if
+
+            # Use tokenizer to encode the text
+            clip_tokens_unpooled = models.tokenizer(
+                captions_unpooled,
+                truncation=True,
+                padding="max_length",
+                max_length=models.tokenizer.model_max_length,
+                return_tensors="pt"
+            ).to(self.device)
+
+            # Difference between clip and text model ?
+            text_encoder_output = models.text_model(
+                **clip_tokens_unpooled,
+                output_hidden_states=True
+            )
+
+            # If clip wanted, get the last hidden state
             if 'clip_text' in return_fields:
                 text_embeddings = text_encoder_output.hidden_states[-1]
+            # end if
+
+            # If clip pooled wanted, get the pooled hidden state
             if 'clip_text_pooled' in return_fields:
                 text_pooled_embeddings = text_encoder_output.text_embeds.unsqueeze(1)
+            # end if
+        # end if
 
+        # Now, encode the images
         image_embeddings = None
         if 'clip_img' in return_fields:
+            # Empty image embedding
             image_embeddings = torch.zeros(batch_size, 768, device=self.device)
+
+            # If images are available
             if images is not None:
+                # To device
                 images = images.to(self.device)
+
+                # Train or inference?
                 if is_eval:
                     if not is_unconditional and eval_image_embeds:
-                        image_embeddings = models.image_model(extras.clip_preprocess(images)).image_embeds
+                        image_embeddings = models.image_model(
+                            extras.clip_preprocess(images)
+                        ).image_embeds
+                    # end if
                 else:
                     rand_idx = np.random.rand(batch_size) > 0.9
                     if any(rand_idx):
-                        image_embeddings[rand_idx] = models.image_model(extras.clip_preprocess(images[rand_idx])).image_embeds
+                        image_embeddings[rand_idx] = models.image_model(
+                            extras.clip_preprocess(images[rand_idx])
+                        ).image_embeds
+                    # end if
+                # end if
+            # end if
+
+            # Remove useless dimension
             image_embeddings = image_embeddings.unsqueeze(1)
+        # end if
+
         return {
             'clip_text': text_embeddings,
             'clip_text_pooled': text_pooled_embeddings,
             'clip_img': image_embeddings
         }
+    # end get_conditions
+
+# end DataCore
 
 
 class TrainingCore(DataCore, WarpCore):

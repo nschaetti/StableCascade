@@ -54,6 +54,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
     class Models(TrainingCore.Models, DataCore.Models, WarpCore.Models):
         effnet: nn.Module = EXPECTED
         previewer: nn.Module = EXPECTED
+    # end Models
 
     @dataclass(frozen=True)
     class Schedulers(WarpCore.Schedulers):
@@ -69,24 +70,38 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
     config: Config
 
     def setup_extras_pre(self) -> Extras:
+        """
+        Setup extras for preprocessing.
+        """
         gdf = GDF(
             schedule=CosineSchedule(clamp_range=[0.0001, 0.9999]),
-            input_scaler=VPScaler(), target=EpsilonTarget(),
+            input_scaler=VPScaler(),
+            target=EpsilonTarget(),
             noise_cond=CosineTNoiseCond(),
             loss_weight=AdaptiveLossWeight() if self.config.adaptive_loss_weight is True else P2LossWeight(),
         )
-        sampling_configs = {"cfg": 5, "sampler": DDPMSampler(gdf), "shift": 1, "timesteps": 20}
+
+        # Sampling configuration
+        sampling_configs = {
+            "cfg": 5,
+            "sampler": DDPMSampler(gdf),
+            "shift": 1,
+            "timesteps": 20
+        }
 
         if self.info.adaptive_loss is not None:
             gdf.loss_weight.bucket_ranges = torch.tensor(self.info.adaptive_loss['bucket_ranges'])
             gdf.loss_weight.bucket_losses = torch.tensor(self.info.adaptive_loss['bucket_losses'])
+        # end if
 
+        # Preprocessing
         effnet_preprocess = torchvision.transforms.Compose([
             torchvision.transforms.Normalize(
                 mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)
             )
         ])
 
+        # CLIP preprocessing
         clip_preprocess = torchvision.transforms.Compose([
             torchvision.transforms.Resize(224, interpolation=torchvision.transforms.InterpolationMode.BICUBIC),
             torchvision.transforms.CenterCrop(224),
@@ -95,6 +110,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             )
         ])
 
+        # Training mode
         if self.config.training:
             transforms = torchvision.transforms.Compose([
                 torchvision.transforms.ToTensor(),
@@ -103,6 +119,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             ])
         else:
             transforms = None
+        # end if
 
         return self.Extras(
             gdf=gdf,
@@ -111,16 +128,41 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             effnet_preprocess=effnet_preprocess,
             clip_preprocess=clip_preprocess
         )
+    # end setup_extras_pre
 
-    def get_conditions(self, batch: dict, models: Models, extras: Extras, is_eval=False, is_unconditional=False,
-                       eval_image_embeds=False, return_fields=None):
+    def get_conditions(
+            self,
+            batch: dict,
+            models: Models,
+            extras: Extras,
+            is_eval=False,
+            is_unconditional=False,
+            eval_image_embeds=False,
+            return_fields=None
+    ):
+        """
+        Get conditions for the forward pass.
+        """
         conditions = super().get_conditions(
-            batch, models, extras, is_eval, is_unconditional,
-            eval_image_embeds, return_fields=return_fields or ['clip_text', 'clip_text_pooled', 'clip_img']
+            batch,
+            models,
+            extras,
+            is_eval,
+            is_unconditional,
+            eval_image_embeds,
+            return_fields=return_fields or ['clip_text', 'clip_text_pooled', 'clip_img']
         )
-        return conditions
 
-    def setup_models(self, extras: Extras) -> Models:
+        return conditions
+    # end get_conditions
+
+    def setup_models(
+            self,
+            extras: Extras
+    ) -> Models:
+        """
+        Setup models for training or evaluation.
+        """
         dtype = getattr(torch, self.config.dtype) if self.config.dtype else torch.float32
 
         # EfficientNet encoder
@@ -150,47 +192,91 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
                 generator = StageC()
                 if self.config.ema_start_iters is not None:
                     generator_ema = StageC()
+                # end if
             elif self.config.model_version == '1B':
-                generator = StageC(c_cond=1536, c_hidden=[1536, 1536], nhead=[24, 24], blocks=[[4, 12], [12, 4]])
+                generator = StageC(
+                    c_cond=1536,
+                    c_hidden=[1536, 1536],
+                    nhead=[24, 24],
+                    blocks=[[4, 12], [12, 4]]
+                )
                 if self.config.ema_start_iters is not None:
-                    generator_ema = StageC(c_cond=1536, c_hidden=[1536, 1536], nhead=[24, 24], blocks=[[4, 12], [12, 4]])
+                    generator_ema = StageC(
+                        c_cond=1536,
+                        c_hidden=[1536, 1536],
+                        nhead=[24, 24],
+                        blocks=[[4, 12], [12, 4]]
+                    )
+                # end if
             else:
                 raise ValueError(f"Unknown model version {self.config.model_version}")
+            # end if
+        # end with loading_context
 
+        # There is a checkpoint to load
         if self.config.generator_checkpoint_path is not None:
             if loading_context is dummy_context:
                 generator.load_state_dict(load_or_fail(self.config.generator_checkpoint_path))
             else:
                 for param_name, param in load_or_fail(self.config.generator_checkpoint_path).items():
                     set_module_tensor_to_device(generator, param_name, "cpu", value=param)
+                # end for
+            # end if
+        # end if
+
+        # Convert to dtype and device
         generator = generator.to(dtype).to(self.device)
         generator = self.load_model(generator, 'generator')
 
+        # EMA
         if generator_ema is not None:
+            # Load EMA checkpoint
             if loading_context is dummy_context:
                 generator_ema.load_state_dict(generator.state_dict())
             else:
                 for param_name, param in generator.state_dict().items():
                     set_module_tensor_to_device(generator_ema, param_name, "cpu", value=param)
+                # end for
+            # end if
+
+            # Load EMA checkpoint
             generator_ema = self.load_model(generator_ema, 'generator_ema')
             generator_ema.to(dtype).to(self.device).eval().requires_grad_(False)
+        # end if
 
+        # Uuse Fully Shard Data Parallel
         if self.config.use_fsdp:
             fsdp_auto_wrap_policy = ModuleWrapPolicy([ResBlock, AttnBlock, TimestepBlock, FeedForwardBlock])
             generator = FSDP(generator, **self.fsdp_defaults, auto_wrap_policy=fsdp_auto_wrap_policy, device_id=self.device)
             if generator_ema is not None:
                 generator_ema = FSDP(generator_ema, **self.fsdp_defaults, auto_wrap_policy=fsdp_auto_wrap_policy, device_id=self.device)
+            # end if
+        # end if
 
-        # CLIP encoders
+        # CLIP encoders (AutoTokenizer from transformers)
         tokenizer = AutoTokenizer.from_pretrained(self.config.clip_text_model_name)
-        text_model = CLIPTextModelWithProjection.from_pretrained(self.config.clip_text_model_name).requires_grad_(False).to(dtype).to(self.device)
-        image_model = CLIPVisionModelWithProjection.from_pretrained(self.config.clip_image_model_name).requires_grad_(False).to(dtype).to(self.device)
 
+        # CLIP text model
+        text_model = CLIPTextModelWithProjection.from_pretrained(
+            self.config.clip_text_model_name
+        ).requires_grad_(False).to(dtype).to(self.device)
+
+        # CLIP image model
+        image_model = CLIPVisionModelWithProjection.from_pretrained(
+            self.config.clip_image_model_name
+        ).requires_grad_(False).to(dtype).to(self.device)
+
+        # Package models
         return self.Models(
-            effnet=effnet, previewer=previewer,
-            generator=generator, generator_ema=generator_ema,
-            tokenizer=tokenizer, text_model=text_model, image_model=image_model
+            effnet=effnet,
+            previewer=previewer,
+            generator=generator,
+            generator_ema=generator_ema,
+            tokenizer=tokenizer,
+            text_model=text_model,
+            image_model=image_model
         )
+    # end setup_models
 
     def setup_optimizers(self, extras: Extras, models: Models) -> TrainingCore.Optimizers:
         optimizer = optim.AdamW(models.generator.parameters(), lr=self.config.lr)  # , eps=1e-7, betas=(0.9, 0.95))
