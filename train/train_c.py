@@ -29,6 +29,7 @@ from accelerate.utils import set_module_tensor_to_device
 from contextlib import contextmanager
 
 class WurstCore(TrainingCore, DataCore, WarpCore):
+
     @dataclass(frozen=True)
     class Config(TrainingCore.Config, DataCore.Config, WarpCore.Config):
         # TRAINING PARAMS
