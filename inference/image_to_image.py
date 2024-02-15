@@ -7,7 +7,6 @@ import os
 import yaml
 from tqdm import tqdm
 
-os.chdir('..')
 
 from inference.utils import *
 from train import WurstCoreC, WurstCoreB
@@ -67,21 +66,21 @@ models_b = WurstCoreB.Models(
 models_b.generator.bfloat16().eval().requires_grad_(False)
 print("Info:: Stage B loaded and ready")
 
-# Compile generator
-models_c = WurstCoreC.Models(
-    **{
-        **models_c.to_dict(),
-        'generator': torch.compile(models_c.generator, mode="reduce-overhead", fullgraph=True)
-    }
-)
-
-# Compile generator
-models_b = WurstCoreB.Models(
-    **{
-        **models_b.to_dict(),
-        'generator': torch.compile(models_b.generator, mode="reduce-overhead", fullgraph=True)
-    }
-)
+# # Compile generator
+# models_c = WurstCoreC.Models(
+#     **{
+#         **models_c.to_dict(),
+#         'generator': torch.compile(models_c.generator, mode="reduce-overhead", fullgraph=True)
+#     }
+# )
+#
+# # Compile generator
+# models_b = WurstCoreB.Models(
+#     **{
+#         **models_b.to_dict(),
+#         'generator': torch.compile(models_b.generator, mode="reduce-overhead", fullgraph=True)
+#     }
+# )
 
 # Batch size
 batch_size = 4
@@ -103,7 +102,7 @@ batch = {'images': images}
 show_images(batch['images'])
 
 # Prompt, noise and image sizes
-caption = "a person riding a rodent"
+caption = "A reptile riding a blue fluffy cat"
 noise_level = 0.8
 height, width = 1024, 1024
 
@@ -211,6 +210,10 @@ with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
 # end with no grad, autocast
 
 # Show generated images
-show_images(batch['images'])
-show_images(sampled)
+original_image_grid = show_images(batch['images'], return_images=True)
+image_grid = show_images(sampled, return_images=True)
+original_image_grid.save("original_image.png")
+image_grid.save("image_to_image4.png")
+# show_images(batch['images'])
+# show_images(sampled)
 

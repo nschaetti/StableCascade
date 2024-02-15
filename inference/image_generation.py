@@ -3,12 +3,7 @@
 
 import os
 import yaml
-import torch
 from tqdm import tqdm
-
-
-os.chdir('..')
-
 from inference.utils import *
 from train import WurstCoreC, WurstCoreB
 
@@ -73,20 +68,20 @@ models_b.generator.bfloat16().eval().requires_grad_(False)
 print("Info:: Stage B loaded and ready")
 
 # Compile generator
-models = WurstCoreC.Models(
-    **{
-        **models_c.to_dict(),
-        'generator': torch.compile(models_c.generator, mode="reduce-overhead", fullgraph=True)
-    }
-)
+# models = WurstCoreC.Models(
+#     **{
+#         **models_c.to_dict(),
+#         'generator': torch.compile(models_c.generator, mode="reduce-overhead", fullgraph=True)
+#     }
+# )
 
 # Compile generator
-models_b = WurstCoreB.Models(
-    **{
-        **models_b.to_dict(),
-        'generator': torch.compile(models_b.generator, mode="reduce-overhead", fullgraph=True)
-    }
-)
+# models_b = WurstCoreB.Models(
+#     **{
+#         **models_b.to_dict(),
+#         'generator': torch.compile(models_b.generator, mode="reduce-overhead", fullgraph=True)
+#     }
+# )
 
 # Batch size
 batch_size = 4
@@ -120,7 +115,7 @@ batch = {'captions': [caption] * batch_size}
 # Prepare conditions for stage C
 conditions_c = core_c.get_conditions(
     batch,
-    models,
+    models_c,
     extras_c,
     is_eval=True,
     is_unconditional=False,
@@ -130,7 +125,7 @@ conditions_c = core_c.get_conditions(
 # Prepare unconditions for stage C
 unconditions_c = core_c.get_conditions(
     batch,
-    models,
+    models_c,
     extras_c,
     is_eval=True,
     is_unconditional=True,
@@ -159,7 +154,7 @@ unconditions_b = core_b.get_conditions(
 with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
     # Sample stage C
     sampling_c = extras_c.gdf.sample(
-        models.generator,
+        models_c.generator,
         conditions_c,
         stage_c_latent_shape,
         unconditions_c,
@@ -170,7 +165,7 @@ with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
     # Sample stage C
     for (sampled_c, _, _) in tqdm(sampling_c, total=extras_c.sampling_configs['timesteps']):
         sampled_c = sampled_c
-    # end for
+    # end forx§
 
     # Conditions for sample stage B
     conditions_b['effnet'] = sampled_c
@@ -196,4 +191,5 @@ with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
 # end with no grad, autocast
 
 # Show the images
-show_images(sampled)
+image_grid = show_images(sampled, return_images=True)
+image_grid.save("image_generation.png")

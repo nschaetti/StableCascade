@@ -7,8 +7,7 @@
 import os
 import yaml
 from tqdm import tqdm
-
-os.chdir('..')
+from PIL import Image
 
 from inference.utils import *
 from train import WurstCoreC, WurstCoreB
@@ -73,21 +72,21 @@ models_b = WurstCoreB.Models(
 models_b.generator.bfloat16().eval().requires_grad_(False)
 print("Info:: Stage B loaded and ready")
 
-# Compile generator
-models = WurstCoreC.Models(
-    **{
-        **models_c.to_dict(),
-        'generator': torch.compile(models_c.generator, mode="reduce-overhead", fullgraph=True)
-    }
-)
-
-# Compile generator
-models_b = WurstCoreB.Models(
-    **{
-        **models_b.to_dict(),
-        'generator': torch.compile(models_b.generator, mode="reduce-overhead", fullgraph=True)
-    }
-)
+# # Compile generator
+# models = WurstCoreC.Models(
+#     **{
+#         **models_c.to_dict(),
+#         'generator': torch.compile(models_c.generator, mode="reduce-overhead", fullgraph=True)
+#     }
+# )
+#
+# # Compile generator
+# models_b = WurstCoreB.Models(
+#     **{
+#         **models_b.to_dict(),
+#         'generator': torch.compile(models_b.generator, mode="reduce-overhead", fullgraph=True)
+#     }
+# )
 
 # Batch size
 batch_size = 4
@@ -95,13 +94,17 @@ batch_size = 4
 # end of common code
 
 # URL
-url = "https://media.discordapp.net/attachments/1121232062708457508/1205134776206491648/image.png?ex=65d74438&is=65c4cf38&hm=fcb40fc6bbe437dee481afffcd94e25c5511d059341b2f2b6e046f157e6b9371&=&format=webp&quality=lossless"
+# url = "https://media.discordapp.net/attachments/1121232062708457508/1205134776206491648/image.png?ex=65d74438&is=65c4cf38&hm=fcb40fc6bbe437dee481afffcd94e25c5511d059341b2f2b6e046f157e6b9371&=&format=webp&quality=lossless"
+image_file = "image_to_image_base.png"
 
 # Resize images
 # and multiply for batch size
 images = resize_image(
-    download_image(url)
+    Image.open(image_file).convert("RGB")
 ).unsqueeze(0).expand(batch_size, -1, -1, -1).to(device)
+# images = resize_image(
+#     download_image(url)
+# ).unsqueeze(0).expand(batch_size, -1, -1, -1).to(device)
 
 # Source images as a batch
 batch = {'images': images}
@@ -144,7 +147,7 @@ with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
     # Returns a dictionary with the keys: 'clip_text', 'clip_text_pooled', 'clip_img'
     conditions_c = core_c.get_conditions(
         batch=batch,
-        models=models,
+        models=models_c,
         extras=extras_c,
         is_eval=True,
         is_unconditional=False,
@@ -156,7 +159,7 @@ with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
     # Uncondition is empty prompt, with zero image embeds
     unconditions_c = core_c.get_conditions(
         batch=batch,
-        models=models,
+        models=models_c,
         extras=extras_c,
         is_eval=True,
         is_unconditional=True,
@@ -186,7 +189,7 @@ with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
 
     # Sampler for stage C
     sampling_c = extras_c.gdf.sample(
-        models.generator,
+        models_c.generator,
         conditions_c,
         stage_c_latent_shape,
         unconditions_c,
@@ -223,4 +226,7 @@ with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
 # end with no grad, autocast
 
 # Show images
-show_images(sampled)
+original_image_grid = show_images(batch['images'], return_images=True)
+image_grid = show_images(sampled, return_images=True)
+original_image_grid.save("variation_image2.png")
+image_grid.save("image_variation2.png")

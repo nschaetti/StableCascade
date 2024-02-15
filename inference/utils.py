@@ -5,7 +5,7 @@ import torchvision
 from math import ceil
 from io import BytesIO
 import matplotlib.pyplot as plt
-from IPython.display import display, Image
+# from IPython.display import display, Image
 import torchvision.transforms.functional as F
 
 
@@ -45,10 +45,12 @@ def show_images(images, rows=None, cols=None, return_images=False, **kwargs):
     
     bio = BytesIO()
     grid.save(bio, format='png')
-    display(Image(bio.getvalue(), format='png'))
+    # display(Image(bio.getvalue(), format='png'))
 
     if return_images:
         return grid
+    # end if
+# end show_images
 
 
 def calculate_latent_sizes(
